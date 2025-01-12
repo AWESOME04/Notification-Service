@@ -1,98 +1,66 @@
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 const Notification = require('../database/models/Notification');
-const { FormatData } = require('../utils');
 require('dotenv').config();
 
 class NotificationService {
     constructor() {
-        console.log('Initializing email transporter with:', process.env.EMAIL_ADDRESS);
-        this.transporter = nodemailer.createTransport({
-            host: 'smtp.gmail.com',
-            port: 587,
-            secure: false,
-            auth: {
-                user: process.env.EMAIL_ADDRESS,
-                pass: process.env.APP_PASSWORD
-            },
-            tls: {
-                rejectUnauthorized: false
-            }
-        });
-
-        // Verify transporter
-        this.transporter.verify((error, success) => {
-            if (error) {
-                console.error('Error verifying transporter:', error);
-            } else {
-                console.log('Email transporter is ready to send emails');
-            }
-        });
+        this.resend = new Resend(process.env.RESEND_API_KEY);
+        console.log('Resend email service initialized');
     }
 
     async SendOrderConfirmation(userId, orderData) {
         try {
-            console.log('Preparing to send order confirmation email for order:', orderData.orderId);
-            
-            // The email content
+            console.log('Preparing to send order confirmation email for order:', orderData);
+
             const emailContent = `
-                <h1>Order Confirmation</h1>
-                <p>Thank you for your order!</p>
-                <h2>Order Details:</h2>
-                <p>Order ID: ${orderData.orderId}</p>
-                <p>Total Amount: $${orderData.total}</p>
-                <h3>Items:</h3>
-                <ul>
-                    ${orderData.items.map(item => `
-                        <li>
-                            ${item.name} - Quantity: ${item.quantity} - Price: $${item.price}
-                        </li>
-                    `).join('')}
-                </ul>
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                    <h1 style="color: #333; text-align: center;">Order Placed Successfully!</h1>
+                    <p>Thank you for your order. Your order has been received and is being processed.</p>
+                    
+                    <div style="background-color: #f8f9fa; padding: 15px; margin: 20px 0;">
+                        <h2 style="color: #333;">Order Summary</h2>
+                        <p><strong>Order ID:</strong> ${orderData.orderId}</p>
+                        <p><strong>Total Amount:</strong> $${orderData.total}</p>
+                        <p><strong>Number of Items:</strong> ${orderData.items.length}</p>
+                    </div>
+
+                    <p style="text-align: center; color: #666;">
+                        Thank you for shopping with us!
+                    </p>
+                </div>
             `;
 
-            console.log('Sending email to:', process.env.EMAIL_ADDRESS);
-
-            // Send email
-            const mailOptions = {
-                from: {
-                    name: 'MultiVendor Marketplace',
-                    address: process.env.EMAIL_ADDRESS
-                },
-                to: process.env.EMAIL_ADDRESS,
-                subject: 'Order Confirmation - MultiVendor Marketplace',
+            const emailData = {
+                from: 'MultiVendor <orders@multivendor.com>',
+                to: userId.email, 
+                subject: 'Order Confirmation - Your Order Has Been Placed!',
                 html: emailContent
             };
 
-            console.log('Attempting to send email...');
-            const result = await this.transporter.sendMail(mailOptions);
-            console.log('Email sent successfully. Message ID:', result.messageId);
+            console.log('Sending email with configuration:', emailData);
+            const { data, error } = await this.resend.emails.send(emailData);
+            
+            if (error) {
+                console.error('Error sending email:', error);
+                return { success: false, error: error.message };
+            }
 
-            // Save notification to database
-            const notification = await Notification.create({
-                recipient: process.env.EMAIL_ADDRESS,
-                content: emailContent,
-                type: 'order_confirmation',
-                status: 'sent'
-            });
-
-            console.log('Notification saved to database with ID:', notification.id);
-            return { emailResult: result, notification };
+            console.log('Email sent successfully:', data);
+            return { success: true, messageId: data.id };
         } catch (error) {
-            console.error('Error in SendOrderConfirmation:', error);
-            throw error;
+            console.error('Error sending order confirmation:', error);
+            return { success: false, error: error.message };
         }
     }
 
     async SubscribeEvents(payload) {
         try {
-            console.log('Received raw payload:', payload);
+            console.log('Received event payload:', payload);
             const { event, data } = JSON.parse(payload);
-            console.log('Parsed event type:', event);
-            console.log('Parsed event data:', JSON.stringify(data, null, 2));
 
             switch(event) {
                 case 'ORDER_CREATED':
-                    console.log('Processing ORDER_CREATED event');
+                    console.log('Processing ORDER_CREATED event with data:', data);
                     await this.SendOrderConfirmation(data.userId, data.order);
                     break;
                 default:
@@ -100,7 +68,6 @@ class NotificationService {
             }
         } catch (error) {
             console.error('Error in SubscribeEvents:', error);
-            throw error;
         }
     }
 }
